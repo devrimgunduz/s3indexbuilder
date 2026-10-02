@@ -24,7 +24,8 @@ def get_complete_bucket(bucket: str, prefix: str) -> Generator[dict, None, None]
 def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict]:
     indexes = {}
     files = defaultdict(list)
-    for o in get_complete_bucket(bucket, prefix):
+    # List with a trailing slash, so that prefix "foo" does not also match "foobar/"
+    for o in get_complete_bucket(bucket, prefix + '/' if prefix else ''):
         (dn, fn) = os.path.split(o['Key'])
         if fn == 'index.html':
             indexes[dn] = o
