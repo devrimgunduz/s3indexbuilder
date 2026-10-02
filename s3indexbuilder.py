@@ -16,6 +16,9 @@ import boto3
 s3 = boto3.client('s3')
 cloudfront = boto3.client('cloudfront')
 
+# CloudFront accepts at most this many paths in a single invalidation
+MAX_INVALIDATION_PATHS = 3000
+
 
 def get_complete_bucket(bucket: str, prefix: str) -> Generator[dict, None, None]:
     for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix=prefix):
@@ -142,16 +145,24 @@ if __name__ == "__main__":
         invalidations.add('/{}/'.format(d) if d else '/')
 
     if invalidations and args.cfdistribution:
+        paths = list(invalidations)
+        if len(paths) > MAX_INVALIDATION_PATHS:
+            # Too many for one request, so invalidate everything we operate on instead
+            paths = ['/{}/*'.format(prefix) if prefix else '/*']
+
         # Issue cache invalidations to CFN
         cloudfront.create_invalidation(
             DistributionId=args.cfdistribution,
             InvalidationBatch={
                 'Paths': {
-                    'Quantity': len(invalidations),
-                    'Items': list(invalidations),
+                    'Quantity': len(paths),
+                    'Items': paths,
                 },
                 'CallerReference': str(uuid.uuid4()),
             },
         )
         if not args.quiet:
-            print("Issued invalidation for {} paths".format(len(invalidations)))
+            if len(paths) == len(invalidations):
+                print("Issued invalidation for {} paths".format(len(paths)))
+            else:
+                print("Issued invalidation for {} ({} changed paths)".format(paths[0], len(invalidations)))
