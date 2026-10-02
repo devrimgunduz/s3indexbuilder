@@ -7,7 +7,6 @@ import hashlib
 import html
 import io
 import os
-import sys
 from typing import cast, Generator, Tuple
 import urllib.parse
 import uuid
@@ -94,11 +93,11 @@ if __name__ == "__main__":
     prefix = args.prefix.rstrip('/') if args.prefix else ''
 
     indexes, files = split_bucket_contents(args.bucket, prefix)
-    if not files:
+    if files:
+        fill_missing_parent_directories(files, prefix)
+    else:
+        # Nothing to index, but there can still be old index files to remove
         print("No files found.")
-        sys.exit(0)
-
-    fill_missing_parent_directories(files, prefix)
 
     invalidations = set([])
 
