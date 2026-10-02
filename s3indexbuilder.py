@@ -26,12 +26,14 @@ def get_complete_bucket(bucket: str, prefix: str) -> Generator[dict, None, None]
         yield from cast(dict, page.get('Contents', []))
 
 
-def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict, List[str]]:
+def split_bucket_contents(bucket: str, prefix: str, verbose: bool = False) -> Tuple[dict, dict, List[str]]:
     indexes = {}
     files: dict = defaultdict(list)
     skipped: List[str] = []
     # List with a trailing slash, so that prefix "foo" does not also match "foobar/"
-    for o in get_complete_bucket(bucket, prefix + '/' if prefix else ''):
+    for n, o in enumerate(get_complete_bucket(bucket, prefix + '/' if prefix else ''), 1):
+        if verbose and n % 1000 == 0:
+            print("Listed {} objects so far".format(n))
         if o['Key'].startswith('/'):
             # Keys with a leading slash have no place in the directory tree
             # (and their index would be served at a "//" URL), so leave them be.
@@ -101,7 +103,10 @@ if __name__ == "__main__":
     parser.add_argument('prefix', help='Path prefix to operate on', nargs='?')
     parser.add_argument('--cfdistribution', type=str,
                         help='CloudFront distribution ID to invalidate to')
-    parser.add_argument('--quiet', action='store_true', help='No status messages')
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument('--quiet', action='store_true', help='No status messages')
+    verbosity.add_argument('--verbose', action='store_true',
+                           help='Extra status messages (listing progress, unchanged indexes)')
 
     args = parser.parse_args()
 
@@ -110,11 +115,17 @@ if __name__ == "__main__":
 
     prefix = args.prefix.rstrip('/') if args.prefix else ''
 
-    indexes, files, skipped = split_bucket_contents(args.bucket, prefix)
+    if not args.quiet:
+        print("Listing objects in s3://{}/{}".format(args.bucket, prefix + '/' if prefix else ''))
+
+    indexes, files, skipped = split_bucket_contents(args.bucket, prefix, args.verbose)
     if skipped:
         # Shown even with --quiet, as these objects never get indexed
         print("WARNING: skipped {} objects whose key starts with a slash, e.g. {}".format(
             len(skipped), skipped[0]), file=sys.stderr)
+        if args.verbose:
+            for k in skipped:
+                print("Skipped: {}".format(k))
     if files:
         fill_missing_parent_directories(files, prefix)
     else:
@@ -122,7 +133,15 @@ if __name__ == "__main__":
         if not args.quiet:
             print("No files found.")
 
+    if not args.quiet:
+        print("Found {} files in {} directories, and {} existing index files".format(
+            sum(len(f) for f in files.values()),
+            len(files),
+            len(indexes),
+        ))
+
     invalidations = set([])
+    removed = created = updated = unchanged = 0
 
     # Look for and remove any extra files
     for i in indexes.keys():
@@ -134,6 +153,7 @@ if __name__ == "__main__":
             )
             if not args.quiet:
                 print("Index removed: {}".format(key))
+            removed += 1
             invalidations.add('/{}/'.format(i) if i else '/')
 
     subdirs = get_subdirectories(files)
@@ -142,9 +162,11 @@ if __name__ == "__main__":
         md5 = hashlib.md5(idx)
         md5h = md5.hexdigest()
         if d not in indexes:
+            created += 1
             if not args.quiet:
                 print("Generate new index file in {}".format(d))
         elif indexes[d]['ETag'].strip('"') != md5h:
+            updated += 1
             if not args.quiet:
                 print("Update index file in {} (hash from {} to {})".format(
                     d,
@@ -152,6 +174,9 @@ if __name__ == "__main__":
                     md5h,
                 ))
         else:
+            unchanged += 1
+            if args.verbose:
+                print("Index file in {} is unchanged".format(d))
             continue
         s3.put_object(
             Bucket=args.bucket,
@@ -164,6 +189,10 @@ if __name__ == "__main__":
         # Invalidations always start with a leading slash, and we need the trailing directory indicator too
         invalidations.add('/{}/'.format(d) if d else '/')
 
+    if not args.quiet:
+        print("Indexes: {} created, {} updated, {} unchanged, {} removed".format(
+            created, updated, unchanged, removed))
+
     if invalidations and args.cfdistribution:
         paths = list(invalidations)
         if len(paths) > MAX_INVALIDATION_PATHS:
@@ -171,6 +200,8 @@ if __name__ == "__main__":
             paths = ['/{}/*'.format(prefix) if prefix else '/*']
 
         # Issue cache invalidations to CFN
+        if args.verbose:
+            print("Invalidating {} paths in distribution {}".format(len(paths), args.cfdistribution))
         cloudfront.create_invalidation(
             DistributionId=args.cfdistribution,
             InvalidationBatch={
