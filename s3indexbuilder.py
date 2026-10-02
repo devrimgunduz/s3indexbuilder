@@ -17,17 +17,8 @@ cloudfront = boto3.client('cloudfront')
 
 
 def get_complete_bucket(bucket: str, prefix: str) -> Generator[dict, None, None]:
-    if prefix:
-        r = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-    else:
-        r = s3.list_objects_v2(Bucket=bucket)
-    while True:
-        if 'Contents' not in r:
-            return
-        yield from cast(dict, r['Contents'])
-        if not r['IsTruncated']:
-            return
-        r = s3.list_objects_v2(Bucket=bucket, ContinuationToken=r['NextContinuationToken'])
+    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix=prefix):
+        yield from cast(dict, page.get('Contents', []))
 
 
 def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict]:
