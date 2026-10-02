@@ -97,7 +97,8 @@ if __name__ == "__main__":
         fill_missing_parent_directories(files, prefix)
     else:
         # Nothing to index, but there can still be old index files to remove
-        print("No files found.")
+        if not args.quiet:
+            print("No files found.")
 
     invalidations = set([])
 
@@ -109,7 +110,8 @@ if __name__ == "__main__":
                 Bucket=args.bucket,
                 Key=key,
             )
-            print("Index removed: {}".format(key))
+            if not args.quiet:
+                print("Index removed: {}".format(key))
             invalidations.add('/{}/'.format(i) if i else '/')
 
     for d in files.keys():
