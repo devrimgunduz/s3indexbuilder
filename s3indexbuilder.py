@@ -4,10 +4,12 @@ import argparse
 import base64
 from collections import defaultdict
 import hashlib
+import html
 import io
 import os
 import sys
 from typing import cast, Generator, Tuple
+import urllib.parse
 import uuid
 
 import boto3
@@ -59,14 +61,16 @@ def generate_index_for(files: dict, directory: str) -> str:
                     if dn != '' and os.path.dirname(dn) == directory])
     s = io.StringIO()
     s.write("<!DOCTYPE html>\n")
-    s.write("<html>\n<head>\n<title>Index of {}/</title>\n".format(directory))
+    s.write("<html>\n<head>\n<title>Index of {}/</title>\n".format(html.escape(directory)))
     s.write("<style>table {font-family: monospace;} table td { padding-right: 40px;}</style>\n")
-    s.write("</head>\n<body>\n<h1>Index of {}/</h1>\n<hr>\n<table>\n".format(directory))
+    s.write("</head>\n<body>\n<h1>Index of {}/</h1>\n<hr>\n<table>\n".format(html.escape(directory)))
     if directory != '':
         s.write("<tr><td><a href=\"../\">../</a></td><td></td><td></td></tr>\n")
     for name, date, size in sorted(entries, key=lambda x: x[0]):
-        s.write("<tr><td><a href=\"{0}\">{0}</a></td><td>{1}</td><td>{2}</td></tr>\n".format(
-            name + ('/' if size is None else ''),
+        name += '/' if size is None else ''
+        s.write("<tr><td><a href=\"{}\">{}</a></td><td>{}</td><td>{}</td></tr>\n".format(
+            urllib.parse.quote(name),
+            html.escape(name),
             date.strftime("%d-%b-%Y %H:%M") if date is not None else '',
             size if size is not None else '',
         ))
@@ -130,7 +134,7 @@ if __name__ == "__main__":
             Key='{}/index.html'.format(d) if d else 'index.html',
             Body=idx,
             ContentMD5=base64.b64encode(md5.digest()).decode(),
-            ContentType='text/html',
+            ContentType='text/html; charset=utf-8',
         )
 
         # Invalidations always start with a leading slash, and we need the trailing directory indicator too
