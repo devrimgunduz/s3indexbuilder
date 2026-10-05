@@ -7,7 +7,8 @@ import hashlib
 import html
 import io
 import os
-from typing import cast, Generator, Tuple
+import sys
+from typing import cast, Generator, List, Tuple
 import urllib.parse
 import uuid
 
@@ -25,11 +26,17 @@ def get_complete_bucket(bucket: str, prefix: str) -> Generator[dict, None, None]
         yield from cast(dict, page.get('Contents', []))
 
 
-def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict]:
+def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict, List[str]]:
     indexes = {}
     files: dict = defaultdict(list)
+    skipped: List[str] = []
     # List with a trailing slash, so that prefix "foo" does not also match "foobar/"
     for o in get_complete_bucket(bucket, prefix + '/' if prefix else ''):
+        if o['Key'].startswith('/'):
+            # Keys with a leading slash have no place in the directory tree
+            # (and their index would be served at a "//" URL), so leave them be.
+            skipped.append(o['Key'])
+            continue
         (dn, fn) = os.path.split(o['Key'])
         if fn == 'index.html':
             indexes[dn] = o
@@ -39,7 +46,7 @@ def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict]:
             files.setdefault(dn, [])
         else:
             files[dn].append(o)
-    return indexes, files
+    return indexes, files, skipped
 
 
 def fill_missing_parent_directories(files: dict, prefix: str) -> None:
@@ -95,7 +102,11 @@ if __name__ == "__main__":
 
     prefix = args.prefix.rstrip('/') if args.prefix else ''
 
-    indexes, files = split_bucket_contents(args.bucket, prefix)
+    indexes, files, skipped = split_bucket_contents(args.bucket, prefix)
+    if skipped:
+        # Shown even with --quiet, as these objects never get indexed
+        print("WARNING: skipped {} objects whose key starts with a slash, e.g. {}".format(
+            len(skipped), skipped[0]), file=sys.stderr)
     if files:
         fill_missing_parent_directories(files, prefix)
     else:
