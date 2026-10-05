@@ -50,24 +50,32 @@ def split_bucket_contents(bucket: str, prefix: str) -> Tuple[dict, dict, List[st
 
 
 def fill_missing_parent_directories(files: dict, prefix: str) -> None:
-    add = []
+    add: set = set()
     for k in files.keys():
         dn = os.path.dirname(k)
         while dn and dn != prefix:
-            if dn not in files and dn not in add:
-                add.append(dn)
+            if dn in files or dn in add:
+                # Already known, and so are all of its parents
+                break
+            add.add(dn)
             dn = os.path.dirname(dn)
     if prefix not in files:
-        add.append(prefix)
+        add.add(prefix)
     for k in add:
         files[k] = []
 
 
-def generate_index_for(files: dict, directory: str) -> str:
+def get_subdirectories(files: dict) -> dict:
+    subdirs: dict = defaultdict(list)
+    for dn in files.keys():
+        if dn != '':
+            subdirs[os.path.dirname(dn)].append(os.path.basename(dn))
+    return subdirs
+
+
+def generate_index_for(files: dict, subdirs: dict, directory: str) -> str:
     entries = [(os.path.basename(f['Key']), f['LastModified'], f['Size']) for f in files[directory]]
-    entries.extend([(os.path.basename(dn), None, None)
-                    for dn in files.keys()
-                    if dn != '' and os.path.dirname(dn) == directory])
+    entries.extend([(name, None, None) for name in subdirs.get(directory, [])])
     s = io.StringIO()
     s.write("<!DOCTYPE html>\n")
     s.write("<html>\n<head>\n<title>Index of {}/</title>\n".format(html.escape(directory)))
@@ -128,8 +136,9 @@ if __name__ == "__main__":
                 print("Index removed: {}".format(key))
             invalidations.add('/{}/'.format(i) if i else '/')
 
+    subdirs = get_subdirectories(files)
     for d in files.keys():
-        idx = generate_index_for(files, d).encode()
+        idx = generate_index_for(files, subdirs, d).encode()
         md5 = hashlib.md5(idx)
         md5h = md5.hexdigest()
         if d not in indexes:
